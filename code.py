@@ -1,0 +1,374 @@
+# code.py
+
+# ===================================================================
+# Haupt-Anwendung für das yourmuesli.at IoT Environmental Monitoring
+#
+# Autor: Ihr Team
+# Datum: 02.09.2025
+#
+# Hardware: Raspberry Pi Pico W
+# Sensor: DHT11 (Temperatur & Luftfeuchtigkeit)
+# Software: CircuitPython
+# ===================================================================
+
+# ----------- Bibliotheken importieren -----------
+# Hier werden später alle benötigten CircuitPython-Bibliotheken importiert
+# z.B. import board, time, wifi, adafruit_dht, etc.
+
+import os
+import time
+import json
+import binascii
+import microcontroller
+import wifi
+import socketpool
+import adafruit_minimqtt.adafruit_minimqtt as MQTT
+
+# ===================================================================
+# KLASSE: ConfigManager
+# ===================================================================
+class ConfigManager:
+    """
+    Verwaltet das Laden und Speichern der Konfiguration aus der 'settings.toml'.
+
+    Hinweis: CircuitPython bringt kein 'toml'-Modul mit. Ein minimaler Parser
+    liegt unter lib/toml.py (mit 'import toml' nutzbar), dazu den Ordner 'lib'
+    auf das CIRCUITPY-Laufwerk kopieren.
+    """
+
+    def __init__(self, filepath: str):
+        """
+        Initialisiert den ConfigManager.
+
+        :param filepath: Der Pfad zur Konfigurationsdatei (z.B. "settings.toml").
+        """
+        pass
+
+    def load_settings(self) -> dict:
+        """
+        Lädt die Einstellungen aus der TOML-Datei.
+
+        :return: Ein Dictionary mit allen geladenen Einstellungen.
+        """
+        pass
+
+    def save_settings(self, settings: dict):
+        """
+        Speichert Änderungen zurück in die TOML-Datei und startet den
+        Mikrocontroller neu, um die neuen Einstellungen zu übernehmen.
+
+        Achtung:
+        - Standardmäßig kann CircuitPython nicht auf das eigene Dateisystem
+          schreiben (nur der angeschlossene Computer per USB). Dafür muss in
+          einer 'boot.py' das Dateisystem mit storage.remount("/", readonly=False)
+          beschreibbar gemacht werden - danach kann der Computer nicht mehr
+          schreiben. Überlegen Sie, wie Sie zwischen beiden Modi wechseln
+          (z.B. über einen Taster/Pin, der in boot.py abgefragt wird).
+        - toml.dump() schreibt nur "schluessel = wert"-Zeilen, Kommentare in
+          der settings.toml gehen dabei verloren.
+
+        :param settings: Das Dictionary mit den zu speichernden Einstellungen.
+        """
+        pass
+
+
+# ===================================================================
+# KLASSE: NetworkManager
+# ===================================================================
+class NetworkManager:
+    """
+    Kümmert sich um die Verbindung zum WLAN-Netzwerk.
+    """
+
+    def __init__(self, ssid: str, password: str):
+        """
+        Initialisiert den NetworkManager mit den WLAN-Zugangsdaten.
+
+        :param ssid: Der Name des WLAN-Netzwerks (SSID).
+        :param password: Das Passwort für das WLAN-Netzwerk.
+        """
+        pass
+
+    def connect(self) -> bool:
+        """
+        Stellt die Verbindung zum WLAN her. Versucht es bei einem Fehler
+        mehrfach, bevor aufgegeben wird.
+
+        :return: True bei erfolgreicher Verbindung, ansonsten False.
+        """
+        pass
+
+    def is_connected(self) -> bool:
+        """
+        Prüft den aktuellen Verbindungsstatus.
+
+        :return: True, wenn eine WLAN-Verbindung besteht, ansonsten False.
+        """
+        pass
+
+    def get_ip(self) -> str:
+        """
+        Gibt die aktuell zugewiesene IP-Adresse des Geräts zurück.
+
+        :return: Die IP-Adresse als String (z.B. "192.168.1.100").
+        """
+        pass
+
+
+# ===================================================================
+# KLASSE: Sensor
+# ===================================================================
+class Sensor:
+    """
+    Kapselt die Logik zum Auslesen des DHT11-Sensors.
+    """
+
+    def __init__(self, pin_number: int):
+        """
+        Initialisiert den Sensor am angegebenen GPIO-Pin.
+
+        :param pin_number: Die Nummer des GPIO-Pins (z.B. 22 für GP22).
+        """
+        pass
+
+    def read_data(self) -> dict | None:
+        """
+        Liest Temperatur und Luftfeuchtigkeit vom Sensor.
+
+        :return: Ein Dictionary wie {'temperature': 22.5, 'humidity': 45.8}
+                 oder None, falls das Auslesen fehlschlägt.
+        """
+        pass
+
+
+# ===================================================================
+# KLASSE: MqttClient
+# ===================================================================
+class MqttClient:
+    """
+    Verwaltet die Kommunikation mit dem zentralen MQTT-Broker.
+    """
+
+    def __init__(self, config: dict):
+        """
+        Initialisiert den MQTT-Client mit den Broker-Details aus der Konfiguration.
+
+        :param config: Ein Dictionary mit den MQTT-Einstellungen.
+        """
+        pass
+
+    def connect(self):
+        """
+        Verbindet sich mit dem MQTT-Broker und setzt eine "Last Will and Testament"
+        Nachricht mit dem Status "offline", die der Broker sendet, falls das Gerät
+        unerwartet die Verbindung verliert.
+        """
+        pass
+
+    def publish_telemetry(self, data: dict):
+        """
+        Formatiert die Sensordaten in ein JSON-Payload und sendet sie
+        an das definierte Telemetrie-Topic.
+
+        :param data: Das Dictionary mit den Sensordaten.
+        """
+        pass
+
+    def publish_status(self, status: str):
+        """
+        Sendet eine einfache Statusnachricht an das definierte Status-Topic.
+        Erlaubte Werte laut docs/iot-specs/conventions.md: "ok", "error", "offline".
+
+        :param status: Die zu sendende Statusnachricht ("ok", "error" oder "offline").
+        """
+        pass
+
+    def loop(self):
+        """
+        Hält die MQTT-Verbindung aktiv. Muss regelmäßig in der Hauptschleife
+        aufgerufen werden.
+        """
+        pass
+
+
+# ===================================================================
+# KLASSE: WebServer
+# ===================================================================
+class WebServer:
+    """
+    Stellt die HTTP-Schnittstelle zur Fernkonfiguration bereit.
+
+    Die Endpunkte und das JSON-Format sind in docs/iot-specs/openapi.yaml
+    und docs/iot-specs/conventions.md festgelegt:
+      GET  /config  -> aktuelle Konfiguration als JSON
+      POST /config  <- neue Werte als JSON (z.B. {"reading_interval_seconds": 120})
+      GET  /status  -> Gerätestatus als JSON (Felder werden in der Gesamtgruppe festgelegt)
+    Eine zusätzliche HTML-Seite für Menschen (z.B. unter "/") ist optional.
+
+    Hinweise:
+    - poll() darf die Hauptschleife nicht blockieren, sonst bleibt MQTT stehen.
+      Stichworte: socket.setblocking(False), accept() liefert dann OSError
+      (EAGAIN), wenn gerade keine Anfrage anliegt.
+    - Nach einem Neustart per Auto-Reload ist Port 80 oft noch belegt.
+      Stichworte: SO_REUSEADDR, oder start() bei Fehler später erneut versuchen.
+    """
+
+    def __init__(self, config_manager: ConfigManager):
+        """
+        Initialisiert den Webserver.
+
+        :param config_manager: Eine Instanz des ConfigManagers, um Einstellungen
+                               zu lesen und zu speichern.
+        """
+        pass
+
+    def start(self):
+        """
+        Startet den Webserver, sodass er auf Anfragen lauscht.
+        """
+        pass
+
+    def poll(self):
+        """
+        Verarbeitet eine einzelne anstehende HTTP-Anfrage. Muss in der
+        Hauptschleife des Programms aufgerufen werden.
+        """
+        pass
+
+    def _handle_get_request(self, request):
+        """
+        Interne Methode: Bearbeitet GET-Anfragen. Liefert je nach Pfad die
+        Konfiguration (/config) oder den Status (/status) als JSON aus,
+        für unbekannte Pfade den Statuscode 404.
+        """
+        pass
+
+    def _handle_post_request(self, request):
+        """
+        Interne Methode: Bearbeitet POST /config. Liest den JSON-Body,
+        übernimmt die neuen Einstellungen und speichert sie über den
+        ConfigManager (siehe dort zum Thema Schreibschutz).
+
+        Hinweise:
+        - Der Body steht hinter der ersten Leerzeile ("\r\n\r\n") der Anfrage
+          und ist so lang wie im Header "Content-Length" angegeben. Er kommt
+          nicht immer in einem Stück an.
+        - Ungültiges JSON oder unbekannte Felder mit 400 beantworten,
+          nicht mit einem Absturz.
+        """
+        pass
+
+
+# ===================================================================
+# HAUPTPROGRAMM (Main Logic)
+# ===================================================================
+
+# 1. INITIALISIERUNG
+#    - Status-LED initialisieren.
+#    - ConfigManager erstellen und Konfiguration aus "settings.toml" laden.
+#    - NetworkManager erstellen und mit den geladenen WLAN-Daten verbinden.
+#      -> Währenddessen Status-LED blinken lassen.
+#    - Sensor, MqttClient und WebServer mit den Konfigurationsdaten instanziieren.
+#    - WebServer starten.
+
+# 2. VERBINDUNGSAUFBAU
+#    - Mit dem MqttClient zum Broker verbinden.
+#    - Eine "ok"-Statusnachricht senden.
+#    - Status-LED auf "dauerhaft an" setzen, um Betriebsbereitschaft zu signalisieren.
+
+# 3. HAUPTSCHLEIFE (Endlosschleife)
+#    - while True:
+#        - MqttClient.loop() aufrufen, um die Verbindung zu halten.
+#        - WebServer.poll() aufrufen, um Konfigurationsanfragen zu prüfen.
+#
+#        - Prüfen, ob das Sende-Intervall (reading_interval_seconds) abgelaufen ist.
+#        - WENN ja:
+#            a. Daten vom Sensor lesen (Sensor.read_data()).
+#            b. WENN Daten gültig sind:
+#               - Telemetrie über den MqttClient veröffentlichen.
+#            c. WENN Daten ungültig sind:
+#               - Fehler loggen oder anzeigen (z.B. durch Blinken der LED).
+#               - Eine "error"-Statusnachricht senden.
+#
+#        - Fehlerbehandlung für getrennte WLAN- oder MQTT-Verbindungen implementieren
+#          und versuchen, die Verbindung wiederherzustellen.
+
+# Brauchen wir grad nicht da wir keinen Temperatur sensor haben zurzeit
+# import time
+# import board
+# import adafruit_dht
+# dht = adafruit_dht.DHT11(board.GP22)
+# print("DHT11 Sensor initialisiert. Starte Messungen...")
+
+
+#while True:
+#    try:
+#        temperatur = dht.temperature
+#        feuchte = dht.humidity
+#        print("Temperatur:", temperatur, "°C  Feuchte:", feuchte, "%")
+#    except RuntimeError as e:
+#        # Beim DHT11 normal (Checksum/Timing), einfach nächstes Mal neu versuchen
+#        print("Lesefehler:", e)
+#    time.sleep(2)
+
+#import time
+
+##############################################################
+#-- Lesen + print CPU-Temp --
+#import microcontroller
+#
+#print("Lese CPU-Temperatur...")
+#
+#while True:
+#    temperatur = microcontroller.cpu.temperature
+#    print("CPU-Temperatur:", round(temperatur, 1), "°C")
+#    time.sleep(2)
+#-------------------------------
+
+
+
+
+# --- WLAN (mit Wiederholung) ---
+ssid = os.getenv("wifi_ssid")
+passwort = os.getenv("wifi_password")
+
+for versuch in range(5):
+    if wifi.radio.connected:
+        break
+    try:
+        print("Verbinde mit WLAN", ssid, "... Versuch", versuch + 1)
+        wifi.radio.connect(ssid, passwort)
+    except ConnectionError as e:
+        print("WLAN-Fehler:", e)
+        time.sleep(2)
+
+print("Verbunden! IP-Adresse:", wifi.radio.ipv4_address)
+
+# --- MQTT ---
+client_id = "pico-" + binascii.hexlify(microcontroller.cpu.uid).decode()
+print("Client-ID:", client_id)
+
+pool = socketpool.SocketPool(wifi.radio)
+mqtt = MQTT.MQTT(
+    broker=os.getenv("broker_address"),
+    port=int(os.getenv("broker_port")),
+    username=os.getenv("mqtt_username"),
+    password=os.getenv("mqtt_password"),
+    client_id=client_id,
+    socket_pool=pool,
+)
+
+print("Verbinde mit Broker...")
+mqtt.connect()
+print("Mit Broker verbunden!")
+
+topic = os.getenv("telemetry_topic")
+intervall = int(os.getenv("reading_interval_seconds"))
+print("Sende alle", intervall, "Sekunden an Topic:", topic)
+while True:
+    temperatur = round(microcontroller.cpu.temperature, 1)
+    payload = json.dumps({"value": temperatur, "unit": "°C"})
+    mqtt.publish(topic, payload)
+    print("Gesendet an", topic, ":", payload)
+    time.sleep(intervall)
+
