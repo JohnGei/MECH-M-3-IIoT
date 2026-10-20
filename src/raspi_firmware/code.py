@@ -15,6 +15,15 @@
 # Hier werden später alle benötigten CircuitPython-Bibliotheken importiert
 # z.B. import board, time, wifi, adafruit_dht, etc.
 
+import os
+import time
+import json
+import binascii
+import microcontroller
+import wifi
+import socketpool
+import adafruit_minimqtt.adafruit_minimqtt as MQTT
+import toml
 
 # ===================================================================
 # KLASSE: ConfigManager
@@ -284,3 +293,88 @@ class WebServer:
 #
 #        - Fehlerbehandlung für getrennte WLAN- oder MQTT-Verbindungen implementieren
 #          und versuchen, die Verbindung wiederherzustellen.
+
+# Brauchen wir grad nicht da wir keinen Temperatur sensor haben zurzeit
+# import time
+# import board
+# import adafruit_dht
+# dht = adafruit_dht.DHT11(board.GP22)
+# print("DHT11 Sensor initialisiert. Starte Messungen...")
+
+
+#while True:
+#    try:
+#        temperatur = dht.temperature
+#        feuchte = dht.humidity
+#        print("Temperatur:", temperatur, "°C  Feuchte:", feuchte, "%")
+#    except RuntimeError as e:
+#        # Beim DHT11 normal (Checksum/Timing), einfach nächstes Mal neu versuchen
+#        print("Lesefehler:", e)
+#    time.sleep(2)
+
+#import time
+
+##############################################################
+#-- Lesen + print CPU-Temp --
+#import microcontroller
+#
+#print("Lese CPU-Temperatur...")
+#
+#while True:
+#    temperatur = microcontroller.cpu.temperature
+#    print("CPU-Temperatur:", round(temperatur, 1), "°C")
+#    time.sleep(2)
+#-------------------------------
+
+# Create a credentials.toml with:
+# mqtt_username = "bobm"
+# mqtt_password = "In Vorlesung erfragen"
+# wifi_ssid = "yourmuesli-produktion"
+# wifi_password = "SehrGeheimesPasswort123"
+
+with open("/credentials.toml", "r") as f:
+    credentials = toml.load(f)
+
+# --- WLAN (mit Wiederholung) ---
+ssid = credentials["wifi_ssid"]
+passwort = credentials["wifi_password"]
+
+for versuch in range(5):
+    if wifi.radio.connected:
+        break
+    try:
+        print("Verbinde mit WLAN", ssid, "... Versuch", versuch + 1)
+        wifi.radio.connect(ssid, passwort)
+    except ConnectionError as e:
+        print("WLAN-Fehler:", e)
+        time.sleep(2)
+
+print("Verbunden! IP-Adresse:", wifi.radio.ipv4_address)
+
+# --- MQTT ---
+client_id = "pico-" + binascii.hexlify(microcontroller.cpu.uid).decode()
+print("Client-ID:", client_id)
+
+pool = socketpool.SocketPool(wifi.radio)
+mqtt = MQTT.MQTT(
+    broker=os.getenv("broker_address"),
+    port=int(os.getenv("broker_port")),
+    username=credentials["mqtt_username"],
+    password=credentials["mqtt_password"],
+    client_id=client_id,
+    socket_pool=pool,
+)
+
+print("Verbinde mit Broker...")
+mqtt.connect()
+print("Mit Broker verbunden!")
+
+topic = os.getenv("telemetry_topic")
+intervall = int(os.getenv("reading_interval_seconds"))
+print("Sende alle", intervall, "Sekunden an Topic:", topic)
+while True:
+    temperatur = round(microcontroller.cpu.temperature, 1)
+    payload = json.dumps({"value": temperatur, "unit": "°C"})
+    mqtt.publish(topic, payload)
+    print("Gesendet an", topic, ":", payload)
+    time.sleep(intervall)

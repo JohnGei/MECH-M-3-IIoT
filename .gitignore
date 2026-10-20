@@ -8,5 +8,6 @@ _site/
 # PlatformIO / Zugangsdaten
 .pio/
 .env
+credentials.toml
 
 **/*.quarto_ipynb
