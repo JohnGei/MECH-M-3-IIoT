@@ -27,9 +27,6 @@ wifi_password = "SehrGeheimesPasswort123"
 # Die Adresse des zentralen Servers (Broker), an den die Daten gesendet werden.
 broker_address = "158.180.44.197"
 broker_port = 1883
-mqtt_username = "bobm"
-# Passwort wird in der Vorlesung bekanntgegeben.
-mqtt_password = "In Vorlesung erfragen"
 
 # Topics sind wie "Kanäle", auf denen Nachrichten gesendet werden.
 # Struktur siehe docs/iot-specs/conventions.md
