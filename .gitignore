@@ -11,3 +11,6 @@ _site/
 credentials.toml
 
 **/*.quarto_ipynb
+
+# Zwischenspeicher von pdm
+.pdm_cache/
