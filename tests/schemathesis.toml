@@ -1,0 +1,17 @@
+# Konfiguration für Schemathesis (eigenschaftsbasierte Tests aus openapi.yaml)
+#
+# Ausführen aus dem Hauptverzeichnis des Repositorys:
+#   schemathesis --config-file tests/schemathesis.toml run docs/iot-specs/openapi.yaml --url http://<ip-des-pico>
+
+# Weniger Beispiele pro Endpunkt als der Standard: Der Pico W bearbeitet
+# Anfragen nacheinander und braucht pro Anfrage etwas Zeit.
+[generation]
+max-examples = 30
+
+# POST /config lehnt unbekannte Felder bewusst mit 400 ab (so verlangt es
+# die Vorlage der Firmware). Das Schema ConfigUpdate verbietet zusätzliche
+# Felder nicht ausdrücklich, deshalb würde Schemathesis diese Ablehnung
+# sonst als Fehler werten.
+[[operations]]
+include-name = "POST /config"
+checks.positive_data_acceptance.expected-statuses = ["2xx", "400"]

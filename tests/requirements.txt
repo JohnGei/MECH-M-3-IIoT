@@ -1,0 +1,6 @@
+# Werkzeuge für die Tests der HTTP-API (auf dem Laptop, nicht auf dem Pico)
+pytest>=8
+requests>=2.31
+pyyaml>=6
+openapi-schema-validator>=0.6
+schemathesis>=4
