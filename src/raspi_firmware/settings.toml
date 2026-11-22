@@ -1,45 +1,30 @@
 # settings.toml
-
 # ===================================================================
-# IoT Environmental Monitoring - Konfigurationsdatei
-# Diese Datei wird vom Raspberry Pi Pico W beim Start gelesen.
-# Bitte die WLAN-Daten vor Ort anpassen.
+# Allgemeine Einstellungen des Pico W (liegt im Git-Repository).
+#
+# Zugangsdaten (WLAN, MQTT-Passwort) stehen NICHT hier, sondern in
+# credentials.toml. Vorlage dafür: credentials.example.toml
 # ===================================================================
 
 # --- Geräteeinstellungen ---
-# Eindeutiger Name für diesen Sensor, wird in den MQTT-Nachrichten verwendet.
-# z.B. "prod-hall-3-vomp"
-device_id = "yourmuesli-innsbruck-01"
-names = "{nachname1-nachname2-nachname3}"
+# Eindeutiger Name für diesen Sensor, wird in den MQTT-Nachrichten
+# (sensor_id) und in GET /config bzw. GET /status verwendet.
+device_id = "iot-gruppe-2"
+names = "neubauer-gruenwald-werlberger"
+location = "Maximilianstraße 13, Innsbruck"
 
-# Optionaler, menschenlesbarer Standort für das Web-Interface.
-location = "Produktionshalle 1, Innsbruck"
-
-
-# --- WLAN-Einstellungen ---
-# SSID (Name) und Passwort des lokalen WLAN-Netzwerks.
-# WICHTIG: Diese müssen vor Ort eingetragen werden!
-wifi_ssid = "yourmuesli-produktion"
-wifi_password = "SehrGeheimesPasswort123"
-
-
-# --- MQTT Broker Einstellungen ---
-# Die Adresse des zentralen Servers (Broker), an den die Daten gesendet werden.
+# --- MQTT Broker ---
 broker_address = "158.180.44.197"
 broker_port = 1883
 
-# Topics sind wie "Kanäle", auf denen Nachrichten gesendet werden.
-# Struktur siehe docs/iot-specs/conventions.md
-# Das Haupt-Topic für die Sensordaten (Temperatur, Luftfeuchtigkeit).
-telemetry_topic = "iiot/group/{nachname1-nachname2-nachname3}/sensor/temperature/state"
-# Das Topic für Statusmeldungen (z.B. "ok", "error", "offline").
-status_topic = "iiot/group/{nachname1-nachname2-nachname3}/status"
+# Topics, Struktur siehe docs/iot-specs/conventions.md
+telemetry_topic = "iiot/group/neubauer-gruenwald-werlberger/sensor/temperature/state"
+status_topic = "iiot/group/neubauer-gruenwald-werlberger/status"
 
-
-# --- Sensor & Applikations-Einstellungen ---
-# Das Intervall in Sekunden, in dem Daten gelesen und gesendet werden.
+# --- Applikation ---
+# Intervall in Sekunden, in dem gemessen und gesendet wird (Minimum 2).
 reading_interval_seconds = 60
 
-# Der GPIO Pin des Raspberry Pi Pico, an dem das Datenkabel des
-# DHT11-Sensors angeschlossen ist (z.B. GP22, siehe Materialien).
+# Nicht verwendet: Statt eines DHT11 wird nach Absprache mit der
+# LV-Leitung die interne CPU-Temperatur des Pico gemessen.
 sensor_pin = 22
