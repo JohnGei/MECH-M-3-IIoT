@@ -1,0 +1,106 @@
+name: iiot_monitoring
+
+services:
+
+  # ============================================================
+  # InfluxDB – Speicherung der Sensordaten
+  # ============================================================
+
+  influxdb:
+    image: influxdb:2
+    container_name: iiot-influxdb
+    restart: unless-stopped
+
+    ports:
+      - "127.0.0.1:8086:8086"
+
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+      - influxdb_config:/etc/influxdb2
+
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUX_USER}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUX_PASSWORD}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUX_ORG}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUX_BUCKET}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN}
+
+    healthcheck:
+      test: ["CMD", "influx", "ping", "--host", "http://localhost:8086"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+
+  # ============================================================
+  # Grafana – Visualisierung
+  # ============================================================
+
+  grafana:
+    image: grafana/grafana-oss:12.4.0
+    container_name: iiot-grafana
+    restart: unless-stopped
+
+    depends_on:
+      influxdb:
+        condition: service_healthy
+
+    ports:
+      - "127.0.0.1:3000:3000"
+
+    environment:
+      INFLUX_ORG: ${INFLUX_ORG}
+      INFLUX_BUCKET: ${INFLUX_BUCKET}
+      INFLUX_TOKEN: ${INFLUX_TOKEN}
+
+      # Grafana-Administrator
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:?GRAFANA_USER fehlt}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?GRAFANA_PASSWORD fehlt}
+
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+
+
+  # ============================================================
+  # MQTT-Collector – Empfangen und Speichern der Messwerte
+  # ============================================================
+
+  collector:
+    build: .
+    container_name: iiot-collector
+    restart: unless-stopped
+
+    depends_on:
+      influxdb:
+        condition: service_healthy
+
+    environment:
+
+      # InfluxDB ist im Docker-Netzwerk über den Servicenamen erreichbar
+      INFLUX_URL: http://influxdb:8086
+      INFLUX_ORG: ${INFLUX_ORG:?INFLUX_ORG fehlt in .env}
+      INFLUX_BUCKET: ${INFLUX_BUCKET:?INFLUX_BUCKET fehlt in .env}
+      INFLUX_TOKEN: ${INFLUX_TOKEN:?INFLUX_TOKEN fehlt in .env}
+
+      # Zugang zum Kurs-Broker (Werte aus .env)
+      MQTT_HOST: ${MQTT_HOST:-158.180.44.197}
+      MQTT_PORT: ${MQTT_PORT:-1883}
+      MQTT_USER: ${MQTT_USER:?MQTT_USER fehlt in .env}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:?MQTT_PASSWORD fehlt in .env}
+
+    # Standard: Live-Daten aller Gruppen vom MQTT-Broker
+    # (abonniert iiot/group/+/sensor/+/state und iiot/group/+/status)
+    command: ["python", "-u", "mqtt_collector.py"]
+
+    # Alternative ohne Broker, z.B. zum Testen des Dashboards:
+    # command: ["python", "-u", "mqtt_collector.py", "--simulate", "--continuous", "--interval", "5"]
+
+
+# Persistente Speicherung der Daten
+volumes:
+  influxdb_data:
+  influxdb_config:
+  grafana_data:
