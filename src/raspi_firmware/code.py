@@ -10,8 +10,10 @@
 # Funktionen:
 #   - Konfiguration aus settings.toml (allgemein, im Git) und
 #     credentials.toml (Zugangsdaten, NICHT im Git)
-#   - WLAN-Verbindung mit Wiederholung, Uhrzeit per NTP
+#   - WLAN-Verbindung mit Wiederholung und Ausweich-WLANs, Uhrzeit per NTP
 #   - MQTT-Telemetrie (JSON mit timestamp, value, unit)
+#   - Optional: SIMULIERTE Luftfeuchte (Zufallswerte, als "simulated"
+#     gekennzeichnet), da kein Feuchtesensor vorhanden ist
 #   - MQTT-Status als JSON ({"status": "ok"} / Last Will {"status": "offline"})
 #   - HTTP-API: GET /config, POST /config, GET /status
 # ===================================================================
@@ -20,6 +22,7 @@ import os
 import time
 import json
 import binascii
+import random
 
 import microcontroller      # Zugriff auf CPU-Temperatur und Chip-Seriennummer
 import wifi                 # WLAN-Funkmodul des Pico W
@@ -170,31 +173,66 @@ class ConfigManager:
 # ===================================================================
 # KLASSE: NetworkManager
 # ===================================================================
-class NetworkManager:
-    """Kümmert sich um WLAN-Verbindung und Uhrzeit."""
+def wifi_networks_from_config(config):
+    """Baut die Liste der WLANs in der Reihenfolge ihrer Priorität.
 
-    def __init__(self, ssid, password):
-        self.ssid = ssid
-        self.password = password
+    Haupt-WLAN:  wifi_ssid / wifi_password
+    Ausweich-WLANs (optional): wifi_ssid_2 / wifi_password_2,
+                               wifi_ssid_3 / wifi_password_3, ...
+    Der TOML-Parser in lib/toml.py kennt keine Listen, deshalb werden
+    die Ausweich-WLANs einfach durchnummeriert.
+    """
+    networks = [(config["wifi_ssid"], config["wifi_password"])]
+    number = 2
+    while ("wifi_ssid_" + str(number)) in config:
+        ssid = config["wifi_ssid_" + str(number)]
+        password = config.get("wifi_password_" + str(number), "")
+        networks.append((ssid, password))
+        number += 1
+    return networks
+
+
+class NetworkManager:
+    """Kümmert sich um WLAN-Verbindung und Uhrzeit.
+
+    Es können mehrere WLANs angegeben werden. Ist das erste nicht
+    erreichbar, wird automatisch das nächste versucht.
+    """
+
+    ATTEMPTS_PER_NETWORK = 3
+
+    def __init__(self, networks):
+        # Liste von (ssid, passwort), das erste WLAN hat Vorrang
+        self.networks = networks
+        self.ssid = None              # WLAN, mit dem das Gerät verbunden ist
         self.time_synced = False      # wurde die Uhr schon per NTP gestellt?
         self.last_time_sync_try = 0   # Zeitpunkt des letzten NTP-Versuchs
 
     def connect(self):
-        """Verbindet mit dem WLAN, bis zu 5 Versuche.
+        """Versucht die WLANs der Reihe nach, je bis zu 3 Mal.
         Der Pico W meldet beim ersten Versuch gelegentlich
-        "Unknown failure 205", deshalb die Wiederholung."""
-        for attempt in range(1, 6):
-            if self.is_connected():
-                return True
-            try:
-                print("Verbinde mit WLAN; Versuch", attempt)
-                wifi.radio.connect(self.ssid, self.password)
-                if self.is_connected():
-                    print("WLAN verbunden:", self.get_ip())
-                    return True
-            except Exception as error:
-                print("WLAN-Verbindungsfehler:", error)
-                time.sleep(2)
+        "Unknown failure 205", deshalb die Wiederholung pro WLAN.
+
+        :return: True, sobald eine Verbindung besteht, sonst False.
+        """
+        if self.is_connected():
+            return True
+
+        for ssid, password in self.networks:
+            for attempt in range(1, self.ATTEMPTS_PER_NETWORK + 1):
+                try:
+                    print("Verbinde mit WLAN", ssid, "; Versuch", attempt)
+                    wifi.radio.connect(ssid, password)
+                    if self.is_connected():
+                        self.ssid = ssid
+                        print("WLAN verbunden:", ssid, self.get_ip())
+                        return True
+                except Exception as error:
+                    print("WLAN-Verbindungsfehler:", error)
+                    time.sleep(2)
+            print("WLAN", ssid, "nicht erreichbar, versuche das nächste")
+
+        print("Kein WLAN erreichbar")
         return False
 
     def is_connected(self):
@@ -242,6 +280,8 @@ class Sensor:
         # pin_number wird für die CPU-Temperatur nicht gebraucht, bleibt
         # aber erhalten, damit die Schnittstelle zur Vorlage passt.
         self.pin_number = pin_number
+        # Startwert für die simulierte Luftfeuchte (siehe read_humidity)
+        self.simulated_humidity = 45.0
 
     def read_data(self):
         """Liefert einen Messwert im Format von asyncapi.yaml
@@ -256,6 +296,25 @@ class Sensor:
         except Exception as error:
             print("Temperaturmessung fehlgeschlagen:", error)
             return None
+
+    def read_humidity(self):
+        """Liefert eine SIMULIERTE relative Luftfeuchte in Prozent.
+
+        Der Pico hat keinen Feuchtesensor. Damit Dashboard und /status
+        trotzdem einen Verlauf zeigen, wird ein Zufallswert erzeugt
+        ("Random Walk"): Jeder Wert weicht nur leicht vom vorherigen ab
+        und bleibt zwischen 30 und 70 %. Das Feld "simulated": true
+        kennzeichnet den Wert in jeder Nachricht als nicht gemessen.
+        """
+        step = random.uniform(-1.5, 1.5)
+        self.simulated_humidity = min(70.0, max(30.0, self.simulated_humidity + step))
+        return {
+            "timestamp": iso_timestamp(),
+            "sensor_id": self.sensor_id,
+            "value": round(self.simulated_humidity, 1),
+            "unit": "%",
+            "simulated": True,
+        }
 
 
 # ===================================================================
@@ -277,6 +336,11 @@ class MqttClient:
 
         self.status_topic = self.config.get(
             "status_topic", self.config["telemetry_topic"] + "/status"
+        )
+        # Topic für die (simulierte) Luftfeuchte, analog zum Temperatur-Topic
+        self.humidity_topic = self.config.get(
+            "humidity_topic",
+            self.config["telemetry_topic"].replace("/temperature/", "/humidity/"),
         )
 
         self.client = MQTT.MQTT(
@@ -311,6 +375,10 @@ class MqttClient:
     def publish_telemetry(self, data):
         """Sendet einen Messwert als JSON an das Telemetrie-Topic."""
         self.client.publish(self.config["telemetry_topic"], json.dumps(data))
+
+    def publish_humidity(self, data):
+        """Sendet die (simulierte) Luftfeuchte als JSON an das Feuchte-Topic."""
+        self.client.publish(self.humidity_topic, json.dumps(data))
 
     def publish_status(self, status):
         """Sendet den Gerätestatus als JSON, z.B.
@@ -423,7 +491,11 @@ class WebServer:
     def update_status(self, last_telemetry=None):
         """Wird von main() nach jeder erfolgreich gesendeten Messung
         aufgerufen. last_telemetry = {"timestamp", "value", "unit"}."""
-        self.status_data = {"last_telemetry": last_telemetry}
+        self.status_data["last_telemetry"] = last_telemetry
+
+    def update_humidity(self, humidity_percent):
+        """Wird von main() nach jeder gesendeten (simulierten) Feuchte aufgerufen."""
+        self.status_data["last_humidity_percent"] = humidity_percent
 
     # ---------------- interne Methoden ----------------
 
@@ -456,9 +528,11 @@ class WebServer:
             "mqtt_connected": self.mqtt_client.is_connected(),
             # null, solange noch keine Messung gesendet wurde
             "last_telemetry": self.status_data.get("last_telemetry"),
-            # Kein Feuchtesensor vorhanden (CPU-Temperatur statt DHT11):
-            # Das Schema erlaubt hier ausdrücklich null.
-            "last_humidity_percent": None,
+            # Simulierte Luftfeuchte (kein Feuchtesensor vorhanden);
+            # null, wenn die Simulation in settings.toml abgeschaltet ist
+            "last_humidity_percent": self.status_data.get("last_humidity_percent"),
+            # Zusätzliches Feld: zeigt an, dass die Feuchte nicht gemessen ist
+            "humidity_simulated": bool(settings.get("simulate_humidity", False)),
             # Zusätzliches Feld (laut Spezifikation erlaubt)
             "reading_interval_seconds": settings.get("reading_interval_seconds", 60),
         }
@@ -550,9 +624,15 @@ def main():
         config["reading_interval_seconds"] = 60
 
     # 2. WLAN verbinden und Uhr stellen (für korrekte Zeitstempel)
-    network = NetworkManager(config["wifi_ssid"], config["wifi_password"])
-    if not network.connect():
-        raise RuntimeError("WLAN-Verbindung nach 5 Versuchen fehlgeschlagen")
+    networks = wifi_networks_from_config(config)
+    print("Konfigurierte WLANs:", ", ".join(ssid for ssid, _ in networks))
+    network = NetworkManager(networks)
+
+    # Nicht aufgeben: Ein Gerät im Feld soll von selbst weiterarbeiten,
+    # sobald eines der WLANs (wieder) erreichbar ist.
+    while not network.connect():
+        print("Kein WLAN erreichbar, neuer Versuch in 30 Sekunden")
+        time.sleep(30)
     network.sync_time()
 
     # 3. Sensor und MQTT einrichten, Status "ok" melden
@@ -602,6 +682,13 @@ def main():
                             "value": measurement["value"],
                             "unit": measurement["unit"],
                         })
+
+                        # Simulierte Luftfeuchte (abschaltbar in settings.toml)
+                        if config_manager.settings.get("simulate_humidity", False):
+                            humidity = sensor.read_humidity()
+                            mqtt_client.publish_humidity(humidity)
+                            print("MQTT gesendet:", json.dumps(humidity))
+                            web_server.update_humidity(humidity["value"])
                     else:
                         print("Messwert nicht gesendet: MQTT nicht verbunden")
                 except Exception as error:

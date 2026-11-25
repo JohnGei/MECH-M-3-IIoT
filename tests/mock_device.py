@@ -128,13 +128,16 @@ def build_device():
         str(workdir / "settings.toml"), str(workdir / "credentials.toml")
     )
     config = config_manager.load_settings()
-    network = fw.NetworkManager(config["wifi_ssid"], config["wifi_password"])
+    network = fw.NetworkManager(fw.wifi_networks_from_config(config))
     mqtt_client = fw.MqttClient(config)
     web_server = fw.WebServer(config_manager, network, mqtt_client, start_time=fw.time.monotonic())
 
     # Eine "gesendete" Messung hinterlegen, damit /status Werte liefert.
-    measurement = fw.Sensor(config["device_id"]).read_data()
+    sensor = fw.Sensor(config["device_id"])
+    measurement = sensor.read_data()
     web_server.update_status({k: measurement[k] for k in ("timestamp", "value", "unit")})
+    if config.get("simulate_humidity", False):
+        web_server.update_humidity(sensor.read_humidity()["value"])
     return server_cls.routes
 
 

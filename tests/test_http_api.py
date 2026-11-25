@@ -48,10 +48,16 @@ def test_status_und_config_haben_dieselbe_device_id(base_url):
     assert get(base_url, "/status").json()["device_id"] == get(base_url, "/config").json()["device_id"]
 
 
-def test_status_ohne_feuchtesensor_meldet_null(base_url):
+def test_status_luftfeuchte_passt_zur_simulation(base_url):
     # Statt DHT11 wird die CPU-Temperatur gemessen (mit der LV-Leitung
-    # abgesprochen), daher gibt es keine Luftfeuchte.
-    assert get(base_url, "/status").json()["last_humidity_percent"] is None
+    # abgesprochen). Es gibt keinen Feuchtesensor: Mit simulate_humidity
+    # liefert das Gerät einen simulierten Prozentwert, sonst null.
+    status = get(base_url, "/status").json()
+    humidity = status["last_humidity_percent"]
+    if status.get("humidity_simulated"):
+        assert humidity is None or 0 <= humidity <= 100
+    else:
+        assert humidity is None
 
 
 def test_uptime_steigt(base_url):

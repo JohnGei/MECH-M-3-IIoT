@@ -27,7 +27,7 @@ Beanspruchte Stufen laut Aufgabenstellung: Teststufe Termin 2 mit OpenAPI-Toolin
 **Abweichungen und Einschränkungen**
 
 - **Kein DHT11:** Nach Absprache mit der LV-Leitung wird statt des DHT11 die interne Temperatur des RP2040-Chips gemessen, da keine Ersatzsensoren verfügbar waren. Sie liegt einige Grad über der Raumtemperatur. Am Pico muss nichts verkabelt werden.
-- **Keine Luftfeuchte:** Deshalb liefert `GET /status` immer `"last_humidity_percent": null`. Das Schema in `openapi.yaml` erlaubt das ausdrücklich. Auf MQTT werden keine Feuchtewerte gesendet.
+- **Simulierte Luftfeuchte:** Ohne DHT11 gibt es keinen Feuchtesensor. Damit Dashboard und `GET /status` trotzdem einen Feuchteverlauf zeigen, erzeugt die Firmware einen **simulierten** Wert (Zufallswerte zwischen 30 und 70 %, die sich nur langsam ändern). Er wird auf `…/sensor/humidity/state` gesendet und ist in jeder Nachricht mit `"simulated": true` gekennzeichnet; `GET /status` meldet zusätzlich `"humidity_simulated": true`. Mit `simulate_humidity = false` in `settings.toml` lässt sich die Simulation abschalten, dann meldet `GET /status` `"last_humidity_percent": null`.
 - **Konfiguration nicht dauerhaft:** `POST /config` übernimmt das neue Intervall sofort. Das Speichern in `settings.toml` scheitert am Schreibschutz von CircuitPython und wird in der Antwort mit `"saved_to_file": false` gemeldet; nach einem Neustart gilt wieder der Wert aus der Datei.
 
 ## Überblick
@@ -100,6 +100,7 @@ Die Konfiguration ist auf zwei Dateien verteilt:
    mqtt_username = "bobm"
    mqtt_password = "Passwort-aus-der-Vorlesung"
    ```
+   Optional lassen sich Ausweich-WLANs mit `wifi_ssid_2`/`wifi_password_2`, `wifi_ssid_3`/`wifi_password_3` usw. angeben. Ist das Haupt-WLAN nicht erreichbar, versucht der Pico die weiteren der Reihe nach, auch bei einem Verbindungsabbruch im laufenden Betrieb.
 3. In `settings.toml` bei Bedarf `device_id` (muss eindeutig sein), die Topics und `reading_interval_seconds` (mindestens 2) anpassen.
 
 **Anforderungen an das WLAN:** 2,4 GHz, WPA2 mit Passwort. Netze mit Benutzername (WPA2-Enterprise, z.B. eduroam) und reine WPA3-Netze unterstützt der Pico W nicht. Bei einem Handy-Hotspot am iPhone „Maximale Kompatibilität“ aktivieren. Für die Firewall siehe [Hinweise für die IT-Abteilung](#hinweise-für-die-it-abteilung).
@@ -172,7 +173,7 @@ Die Zugangsdaten in `.env` werden nur beim **ersten** Start übernommen. Für ei
 | Temperaturdiagramm | Zeitreihen aller Gruppen, eine Linie pro Sensor |
 | Temp. mean / min / max | Kennzahlen über den gewählten Zeitraum |
 | Status-Tabelle | letzter Status jeder Gruppe (`ok`, `error`, `offline`) und Zeitpunkt |
-| Luftfeuchtigkeit | nur für Gruppen mit Feuchtesensor, bei uns leer |
+| Luftfeuchtigkeit | Feuchtewerte aller Gruppen; unsere Werte sind simuliert (siehe [Erreichter Stand](#erreichter-stand)) |
 
 Den Zeitraum der Diagramme oben rechts wählen (Standard: letzte 2 Tage). Das Dashboard aktualisiert sich alle 5 Sekunden.
 

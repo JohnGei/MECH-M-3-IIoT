@@ -20,8 +20,16 @@ broker_port = 1883
 # Topics, Struktur siehe docs/iot-specs/conventions.md
 telemetry_topic = "iiot/group/neubauer-gruenwald-werlberger/sensor/temperature/state"
 status_topic = "iiot/group/neubauer-gruenwald-werlberger/status"
+# Topic für die SIMULIERTE Luftfeuchte (siehe simulate_humidity)
+humidity_topic = "iiot/group/neubauer-gruenwald-werlberger/sensor/humidity/state"
 
 # --- Applikation ---
+# Es gibt keinen Feuchtesensor. Mit true sendet der Pico zusätzlich eine
+# SIMULIERTE Luftfeuchte (Zufallswerte 30-70 %), in jeder Nachricht mit
+# "simulated": true gekennzeichnet. Mit false wird keine Feuchte gesendet
+# und GET /status meldet "last_humidity_percent": null.
+simulate_humidity = true
+
 # Intervall in Sekunden, in dem gemessen und gesendet wird (Minimum 2).
 reading_interval_seconds = 60
 
