@@ -6,7 +6,7 @@ Ein Raspberry Pi Pico W misst Temperatur, sendet sie per MQTT an den Kurs-Broker
 
 | | |
 |---|---|
-| Mitglieder | `<Vorname>` Neubauer, `<Vorname>` Grünwald, Lukas Werlberger |
+| Mitglieder | Til Neubauer, Johannes Grünwald, Lukas Werlberger |
 | MQTT-Gruppenname | `iiot/group/neubauer-gruenwald-werlberger` |
 | Geräte-ID | `iot-gruppe-2` |
 
