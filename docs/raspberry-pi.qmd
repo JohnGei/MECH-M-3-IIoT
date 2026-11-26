@@ -1,0 +1,67 @@
+---
+title: "Firmware für den Raspberry Pi Pico W"
+format:
+  html:
+    anchor-sections: false
+---
+
+Die [Firmware](../src/raspi_firmware/code.py) für Raspberry Pi Pico W und CircuitPython 10 sendet **CPU-Temperatur** (keine Raumtemperatur) und Status per MQTT an den Broker und bietet eine HTTP-API. Ein Feuchtesensor fehlt.
+
+## Installation
+
+1. CircuitPython für den [Pico W](https://circuitpython.org/board/raspberry_pi_pico_w/) herunterladen. Beim Anschließen per USB `BOOTSEL` halten und die `.uf2`-Datei nach `RPI-RP2` kopieren; danach erscheint `CIRCUITPY`.
+2. Aus dem zur CircuitPython-Version passenden [Adafruit Library Bundle](https://circuitpython.org/libraries) `adafruit_minimqtt/`, `adafruit_httpserver/`, `adafruit_connection_manager.mpy`, `adafruit_ticks.mpy` und `adafruit_ntp.mpy` nach `CIRCUITPY/lib/` kopieren. Auch [`toml.py`](../src/raspi_firmware/lib/toml.py) aus dem Repository dorthin kopieren.
+3. [`code.py`](../src/raspi_firmware/code.py) und [`settings.toml`](../src/raspi_firmware/settings.toml) in das Stammverzeichnis von `CIRCUITPY` kopieren. Dort auch `credentials.toml` aus der [Vorlage](../src/raspi_firmware/credentials.example.toml) erstellen und lokal ausfüllen.
+4. Ein erreichbares 2,4-GHz-WLAN mit WPA2-Personal verwenden und die Firmware neu laden. Die serielle USB-Konsole mit 115200 Baud zeigt Verbindungsfehler, IP-Adresse und HTTP-Port.
+
+## Konfiguration
+
+- `settings.toml`: eindeutige `device_id` (in Nachrichten als `sensor_id`), `broker_address`, `broker_port` und MQTT-Topics setzen. `reading_interval_seconds` steuert das Sendeintervall (Standard: 60 Sekunden).
+- `simulate_humidity = true` aktiviert simulierte Feuchte; die mitgelieferte Einstellung ist `true`, ohne Eintrag gilt `false`. Die Payload trägt `"simulated": true`; der Collector verwirft diese Kennzeichnung, sodass Grafana die Werte nicht von Messwerten unterscheiden kann.
+
+Die ignorierte `credentials.toml` enthält ausschließlich lokale Zugangsdaten, beispielsweise:
+
+```toml
+wifi_ssid = "YOUR_WIFI_SSID"
+wifi_password = "YOUR_WIFI_PASSWORD"
+mqtt_username = "YOUR_MQTT_USERNAME"
+mqtt_password = "YOUR_MQTT_PASSWORD"
+```
+
+Für ein Ausweich-WLAN optional `wifi_ssid_2` und `wifi_password_2` setzen; weitere Netze lückenlos mit `_3`, `_4` usw. ergänzen. `credentials.toml` überschreibt gleichnamige Einstellungen und darf nie veröffentlicht werden. Zugangsdaten nicht in `settings.toml` ablegen: Beim Speichern werden nur aus `credentials.toml` geladene Schlüssel ausgeschlossen. Der einfache TOML-Parser unterstützt keine Tabellen, Listen oder vollständige Escape-Syntax.
+
+## MQTT und Betrieb
+
+Topics für die eigene Gruppe setzen; `<gruppe>` ersetzen (siehe [AsyncAPI](iot-specs/asyncapi.yaml)):
+
+- `telemetry_topic`: `iiot/group/<gruppe>/sensor/temperature/state`; JSON mit `timestamp`, `sensor_id`, `value` und `unit`.
+- `humidity_topic`: `iiot/group/<gruppe>/sensor/humidity/state`; Feuchte wird nur nach erfolgreichem Temperatur-Publish gesendet.
+- `status_topic`: `iiot/group/<gruppe>/status`; Status wird retained veröffentlicht, bei unerwartetem Abbruch meldet der Broker den Last Will `offline`.
+
+Ohne `humidity_topic` wird `/temperature/` im Temperatur-Topic durch `/humidity/` ersetzt; fehlt dieses Segment, bleibt das Topic unverändert. Ohne `status_topic` wird `/status` an das Temperatur-Topic angehängt. Daher beide Topics ausdrücklich setzen. Die AsyncAPI beschreibt derzeit nur Temperatur und Status.
+
+WLAN und MQTT werden bei Abbruch erneut verbunden; schlägt jedoch die erste MQTT-Verbindung fehl, startet HTTP nicht. NTP stellt die Uhr auf UTC; bis zur erfolgreichen Synchronisierung können Zeitstempel falsch sein.
+
+## HTTP-API
+
+Der Server verwendet Port 80, bei einem Startfehler Port 5000; maßgeblich ist die Konsolenausgabe. Weitere Links: [OpenAPI](iot-specs/openapi.yaml), [HTTP-Tests](../tests/test_http_api.py), [Mock ohne Hardware](../tests/mock_device.py) und [README](../README.md).
+
+- `GET /config`: Geräte-ID, Intervall sowie Temperatur- und Status-Topic, keine Zugangsdaten.
+- `POST /config`: nur `reading_interval_seconds` als Ganzzahl von 2 bis 3600; ungültige Eingaben liefern 400.
+- `GET /status`: Laufzeit, WLAN-/MQTT-Status, letzte Telemetrie und simulierte Feuchte (`humidity_simulated`, `last_humidity_percent`).
+
+Die Beispieladresse durch die Pico-IP ersetzen und bei Bedarf `:5000` ergänzen:
+
+```sh
+curl http://192.0.2.1/config
+curl http://192.0.2.1/status
+curl -X POST http://192.0.2.1/config -H 'Content-Type: application/json' -d '{"reading_interval_seconds": 30}'
+```
+
+Bei `saved_to_file: false` gilt das neue Intervall nur bis zum Neustart: Das Laufwerk ist für die Firmware bei USB-Zugriff häufig schreibgeschützt. Für eine dauerhafte Änderung `settings.toml` auf dem Laufwerk bearbeiten; erfolgreiches Speichern durch die Firmware entfernt Kommentare.
+
+**Netzwerksicherheit:** MQTT ist ohne TLS, HTTP ohne HTTPS und Authentifizierung implementiert. Die API nicht ins Internet freigeben, sondern auf vertrauenswürdige Clients beschränken; für Fernzugriff VPN oder Gateway verwenden. Ausgehend sind MQTT (konfigurierter Broker-Port), NTP (UDP 123) und DNS nötig. `credentials.toml` liegt unverschlüsselt auf dem Gerät.
+
+## Firmware-API-Referenz
+
+{{< include ../.quarto/reference/firmware-api.qmd >}}

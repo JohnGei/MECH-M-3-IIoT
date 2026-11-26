@@ -1,0 +1,35 @@
+---
+title: "Systemarchitektur"
+---
+
+Das Projekt sammelt Temperatur- und Luftfeuchtigkeitsdaten im Industrial Internet of Things (IIoT). Unser Pico W sendet seine **CPU-Temperatur** und eine **simulierte Luftfeuchtigkeit** über MQTT.
+
+```{mermaid}
+flowchart TD
+    Pico["Raspberry Pi Pico W"] -->|"Messwerte und Status"| Broker["Externer MQTT-Broker"]
+    Others["Weitere Geräte"] -->|"Messwerte und Status"| Broker
+    Broker -->|"MQTT"| Collector["MQTT-Collector"]
+    subgraph Monitoring["Docker Compose: Monitoring-Stack"]
+        Collector -->|"Messwerte speichern"| Database["InfluxDB"]
+        Database -->|"Abfrageergebnisse"| Grafana["Grafana"]
+    end
+    Admin["User mit HTTP-Client"] -->|"Konfiguration und Status"| Pico
+    Grafana -->|"Dashboard"| Viewer["User mit Browser"]
+```
+
+Der Broker läuft außerhalb des Docker-Stacks. Der Collector empfängt MQTT-Nachrichten, InfluxDB speichert sie und Grafana stellt sie dar. Die HTTP-API dient unabhängig davon zur Verwaltung des Pico.
+
+- [Raspberry-Pi-Firmware](raspberry-pi.qmd): Einrichtung, MQTT, HTTP und automatisch generierte Klassenreferenz.
+- [Monitoring-Stack](monitoring-stack.qmd): Container, Datenfluss und Grafana-Dashboard.
+- Schnittstellen: [OpenAPI](iot-specs/openapi.yaml) und [AsyncAPI](iot-specs/asyncapi.yaml).
+
+## Dokumentation erstellen
+
+Im Repository-Verzeichnis:
+
+```sh
+pdm install
+pdm run docs-build
+```
+
+Das Ergebnis liegt unter `_site/index.html`; `pdm run docs-preview` startet eine Vorschau. Beide Befehle erzeugen zuerst die Klassenreferenz mit quartodoc aus den Docstrings, ohne die Firmware auszuführen.

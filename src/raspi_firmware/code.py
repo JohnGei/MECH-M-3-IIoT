@@ -39,13 +39,12 @@ from adafruit_httpserver import Server, JSONResponse
 # Hilfsfunktion: Zeitstempel
 # ===================================================================
 def iso_timestamp():
-    """Liefert die aktuelle Uhrzeit als ISO-8601-Text in UTC,
-    z.B. "2026-11-15T09:35:12Z".
+    """Formatiert ``time.localtime()`` als Zeitstempel im Stil von ISO 8601.
 
-    CircuitPython hat kein strftime, deshalb wird der Text aus dem
-    Tupel von time.localtime() zusammengebaut. {:02d} = ganze Zahl,
-    mindestens zwei Stellen, vorne mit 0 aufgefüllt (9 -> "09").
-    Das "Z" am Ende steht für UTC.
+    Rückgabe:
+        Eine Zeichenkette wie ``2026-11-15T09:35:12Z``. Das Suffix ``Z``
+        ist wörtlich; der Zeitstempel ist nur UTC, wenn ``time.localtime()``
+        UTC liefert.
     """
     t = time.localtime()
     return "{:04d}-{:02d}-{:02d}T{:02d}:{:02d}:{:02d}Z".format(
@@ -57,26 +56,27 @@ def iso_timestamp():
 # KLASSE: ConfigManager
 # ===================================================================
 class ConfigManager:
-    """Liest die Konfiguration aus zwei Dateien:
+    """Verwaltet Einstellungen und Zugangsdaten aus getrennten TOML-Dateien.
 
-    - settings.toml:    allgemeine Einstellungen (Broker, Topics, Intervall).
-                        Liegt im Git-Repository.
-    - credentials.toml: Zugangsdaten (WLAN, MQTT-Passwort). Steht in der
-                        .gitignore und existiert nur auf dem Pico.
-                        Vorlage: credentials.example.toml
-
-    Beide werden zu einem Dictionary zusammengeführt. Gespeichert
-    (POST /config) wird nur in settings.toml und nur ohne Zugangsdaten.
+    Zugangsdaten überschreiben beim Laden gleichnamige Einstellungen. Beim
+    Speichern werden nur Schlüssel ausgeschlossen, die beim Laden aus der
+    Zugangsdaten-Datei erfasst wurden.
     """
 
     def __init__(self, filepath, credentials_path="credentials.toml"):
+        """Setzt die Konfigurationspfade, ohne die Dateien zu laden.
+
+        Argumente:
+            filepath: Pfad zur Einstellungsdatei, auch zum Speichern verwendet.
+            credentials_path: Pfad zur Zugangsdaten-Datei.
+        """
         self.filepath = filepath                    # allgemeine Einstellungen
         self.credentials_path = credentials_path    # Zugangsdaten
         self.settings = {}         # zusammengeführte Einstellungen (wird geteilt!)
         self.secret_keys = set()   # Schlüssel aus credentials.toml
 
     def _read_toml(self, path):
-        """Liest eine TOML-Datei; fehlt sie, kommt ein leeres Dictionary."""
+        """Liest eine TOML-Datei und liefert bei einem OSError ein leeres Dictionary."""
         try:
             with open(path, "r") as file:
                 return toml.load(file)
@@ -85,7 +85,20 @@ class ConfigManager:
             return {}
 
     def load_settings(self):
-        """Lädt beide Dateien und prüft, ob alle Pflichtwerte vorhanden sind."""
+        """Lädt beide Dateien, führt sie zusammen und prüft die Pflichtschlüssel.
+
+        Zugangsdaten überschreiben Einstellungen; bekannte fehlende Schlüssel
+        können über Umgebungsvariablen ergänzt werden. Das Messintervall beträgt
+        standardmäßig 60 Sekunden.
+
+        Rückgabe:
+            Das zusammengeführte Einstellungs-Dictionary, das auch in diesem
+            Manager gespeichert wird.
+
+        Ausnahmen:
+            ValueError: Wenn Pflichtschlüssel fehlen oder das Messintervall
+                nicht in eine ganze Zahl umgewandelt werden kann.
+        """
         self.settings = self._read_toml(self.filepath)
 
         # Zugangsdaten ergänzen; bei doppelten Schlüsseln gewinnt credentials.toml.
@@ -141,13 +154,18 @@ class ConfigManager:
         return self.settings
 
     def save_settings(self, settings):
-        """Versucht, die Einstellungen in settings.toml zu speichern.
+        """Aktualisiert die Einstellungen im Speicher und versucht, sie zu speichern.
 
-        Standardmäßig ist das Laufwerk für CircuitPython schreibgeschützt
-        (nur der Laptop darf per USB schreiben). Dann bleibt die Änderung
-        bis zum Neustart im RAM erhalten.
+        Nur Schlüssel, die beim Laden aus der Zugangsdaten-Datei erfasst wurden,
+        sind ausgeschlossen; andere Schlüssel, auch aus Umgebungsvariablen,
+        können ausgegeben werden. Bei einem OSError beim Speichern bleiben die
+        Änderungen im Speicher erhalten.
 
-        Rückgabe: True = gespeichert, False = Speichern fehlgeschlagen.
+        Argumente:
+            settings: Einstellungen, die in das aktuelle Dictionary übernommen werden.
+
+        Rückgabe:
+            True bei erfolgreichem Speichern, sonst False bei einem OSError.
         """
         self.settings.update(settings)
 
@@ -174,13 +192,22 @@ class ConfigManager:
 # KLASSE: NetworkManager
 # ===================================================================
 def wifi_networks_from_config(config):
-    """Baut die Liste der WLANs in der Reihenfolge ihrer Priorität.
+    """Erstellt eine priorisierte Liste von WLAN-Zugangsdaten aus den Einstellungen.
 
-    Haupt-WLAN:  wifi_ssid / wifi_password
-    Ausweich-WLANs (optional): wifi_ssid_2 / wifi_password_2,
-                               wifi_ssid_3 / wifi_password_3, ...
-    Der TOML-Parser in lib/toml.py kennt keine Listen, deshalb werden
-    die Ausweich-WLANs einfach durchnummeriert.
+    Das Hauptnetz verwendet ``wifi_ssid`` und ``wifi_password``. Ausweichnetze
+    verwenden fortlaufend nummerierte Schlüssel ab ``wifi_ssid_2`` und
+    ``wifi_password_2``; die erste fehlende SSID beendet die Liste. Ein fehlendes
+    Passwort für ein Ausweichnetz ist standardmäßig eine leere Zeichenkette.
+
+    Argumente:
+        config: Einstellungen mit den Zugangsdaten des Hauptnetzes und etwaiger
+            Ausweichnetze.
+
+    Rückgabe:
+        Eine Liste von ``(ssid, password)``-Paaren in Prioritätsreihenfolge.
+
+    Ausnahmen:
+        KeyError: Wenn ein Zugangsdaten-Schlüssel des Hauptnetzes fehlt.
     """
     networks = [(config["wifi_ssid"], config["wifi_password"])]
     number = 2
@@ -193,15 +220,16 @@ def wifi_networks_from_config(config):
 
 
 class NetworkManager:
-    """Kümmert sich um WLAN-Verbindung und Uhrzeit.
-
-    Es können mehrere WLANs angegeben werden. Ist das erste nicht
-    erreichbar, wird automatisch das nächste versucht.
-    """
+    """Verwaltet priorisierte WLAN-Verbindungen und die NTP-Zeitsynchronisierung."""
 
     ATTEMPTS_PER_NETWORK = 3
 
     def __init__(self, networks):
+        """Speichert WLAN-Zugangsdaten und initialisiert den Synchronisierungsstatus.
+
+        Argumente:
+            networks: ``(ssid, password)``-Paare in Verbindungspriorität.
+        """
         # Liste von (ssid, passwort), das erste WLAN hat Vorrang
         self.networks = networks
         self.ssid = None              # WLAN, mit dem das Gerät verbunden ist
@@ -209,11 +237,15 @@ class NetworkManager:
         self.last_time_sync_try = 0   # Zeitpunkt des letzten NTP-Versuchs
 
     def connect(self):
-        """Versucht die WLANs der Reihe nach, je bis zu 3 Mal.
-        Der Pico W meldet beim ersten Versuch gelegentlich
-        "Unknown failure 205", deshalb die Wiederholung pro WLAN.
+        """Versucht die WLANs nach Priorität, bis eine Verbindung besteht.
 
-        :return: True, sobald eine Verbindung besteht, sonst False.
+        Für jedes Netz gibt es bis zu ``ATTEMPTS_PER_NETWORK`` Versuche,
+        standardmäßig drei, bevor das nächste Ausweichnetz versucht wird. Ein
+        erfolgreicher Versuch speichert die SSID; bei bestehender Verbindung
+        kehrt die Methode ohne deren Aktualisierung zurück.
+
+        Rückgabe:
+            True bei Verbindung, auch wenn sie bereits bestand; sonst False.
         """
         if self.is_connected():
             return True
@@ -236,18 +268,24 @@ class NetworkManager:
         return False
 
     def is_connected(self):
+        """Gibt zurück, ob das WLAN-Funkmodul verbunden ist."""
         return wifi.radio.connected
 
     def get_ip(self):
+        """Gibt die IPv4-Adresse des Funkmoduls als Zeichenkette zurück.
+
+        Ist keine Adresse gesetzt, lautet die Zeichenkette ``"None"``.
+        """
         return str(wifi.radio.ipv4_address)
 
     def sync_time(self):
-        """Stellt die Uhr des Pico per NTP auf UTC.
+        """Versucht, die Geräteuhr per NTP auf UTC zu stellen.
 
-        Der Pico hat keine Uhr mit Batterie und startet im Jahr 2000.
-        adafruit_ntp fragt standardmäßig 0.adafruit.pool.ntp.org über
-        UDP Port 123 (wichtig für die Firewall-Freigabe).
-        tz_offset=0 bedeutet UTC, so wie es die Spezifikation verlangt.
+        Speichert den Versuchszeitpunkt anhand der monotonen Uhr.
+
+        Rückgabe:
+            True, wenn der Versuch abgeschlossen wird, oder False, wenn die
+            Synchronisierung eine Ausnahme auslöst.
         """
         self.last_time_sync_try = time.monotonic()
         try:
@@ -266,14 +304,21 @@ class NetworkManager:
 # KLASSE: Sensor
 # ===================================================================
 class Sensor:
-    """Liest die interne CPU-Temperatur des RP2040.
+    """Liest die interne CPU-Temperatur des RP2040 und simuliert Luftfeuchte.
 
-    Nach Absprache mit der LV-Leitung wird diese statt eines DHT11
-    verwendet. Sie misst die Temperatur des Chips, nicht der Raumluft,
-    und liegt daher einige Grad über der Umgebungstemperatur.
+    Die CPU-Temperatur wird statt eines DHT11-Sensors verwendet; sie misst den
+    Chip und nicht die Umgebungsluft. Die Luftfeuchte wird simuliert, da kein
+    Feuchtesensor vorhanden ist.
     """
 
     def __init__(self, sensor_id, pin_number=None):
+        """Speichert die Sensor-ID und initialisiert die simulierte Luftfeuchte.
+
+        Argumente:
+            sensor_id: Kennung, die in Messwerte aufgenommen wird.
+            pin_number: Für Schnittstellenkompatibilität gespeichert; wird weder
+                für CPU-Temperatur noch simulierte Luftfeuchte verwendet.
+        """
         # sensor_id = device_id aus settings.toml; laut asyncapi.yaml ein
         # optionales Feld, hilft aber dem Collector, Sensoren zu unterscheiden.
         self.sensor_id = sensor_id
@@ -284,8 +329,12 @@ class Sensor:
         self.simulated_humidity = 45.0
 
     def read_data(self):
-        """Liefert einen Messwert im Format von asyncapi.yaml
-        (timestamp, sensor_id, value, unit) oder None bei einem Fehler."""
+        """Liest die CPU-Temperatur und erstellt einen Telemetrie-Messwert.
+
+        Rückgabe:
+            Ein Dictionary mit ``timestamp``, ``sensor_id``, ``value`` auf eine
+            Nachkommastelle gerundet und ``unit`` (``°C``), oder None bei Fehler.
+        """
         try:
             return {
                 "timestamp": iso_timestamp(),
@@ -298,13 +347,16 @@ class Sensor:
             return None
 
     def read_humidity(self):
-        """Liefert eine SIMULIERTE relative Luftfeuchte in Prozent.
+        """Erzeugt einen simulierten relativen Luftfeuchtewert in Prozent.
 
-        Der Pico hat keinen Feuchtesensor. Damit Dashboard und /status
-        trotzdem einen Verlauf zeigen, wird ein Zufallswert erzeugt
-        ("Random Walk"): Jeder Wert weicht nur leicht vom vorherigen ab
-        und bleibt zwischen 30 und 70 %. Das Feld "simulated": true
-        kennzeichnet den Wert in jeder Nachricht als nicht gemessen.
+        Verändert den vorherigen Wert, ausgehend von 45 %, zufällig um -1,5 bis
+        1,5 Prozentpunkte und begrenzt das Ergebnis auf 30–70 %. Dadurch wird
+        der interne Wert für den nächsten Messwert aktualisiert.
+
+        Rückgabe:
+            Ein Dictionary mit ``timestamp``, ``sensor_id``, ``value`` auf eine
+            Nachkommastelle gerundet, ``unit`` (``%``) und ``simulated`` auf
+            True gesetzt, um den Wert von einem gemessenen zu unterscheiden.
         """
         step = random.uniform(-1.5, 1.5)
         self.simulated_humidity = min(70.0, max(30.0, self.simulated_humidity + step))
@@ -321,9 +373,19 @@ class Sensor:
 # KLASSE: MqttClient
 # ===================================================================
 class MqttClient:
-    """Verwaltet die Verbindung zum Kurs-Broker."""
+    """Verwaltet die MQTT-Verbindung und veröffentlicht Telemetrie und Status."""
 
     def __init__(self, config):
+        """Erstellt einen MQTT-Client, ohne sich mit dem Broker zu verbinden.
+
+        Argumente:
+            config: Geteiltes Einstellungs-Dictionary mit ``device_id``,
+                ``broker_address``, ``broker_port``, ``mqtt_username``,
+                ``mqtt_password`` und ``telemetry_topic``. ``status_topic``
+                und ``humidity_topic`` sind optional. Das standardmäßige
+                Feuchte-Topic ersetzt ``/temperature/`` durch ``/humidity/``
+                im Telemetrie-Topic; fehlt dieser Abschnitt, bleibt es unverändert.
+        """
         # Dieselbe Dictionary-Instanz wie im ConfigManager: Änderungen
         # über POST /config sind hier sofort sichtbar.
         self.config = config
@@ -358,34 +420,51 @@ class MqttClient:
         self.last_loop = 0                # für loop() höchstens alle 5 s
 
     def connect(self):
-        """Verbindet mit dem Broker. Der Last Will muss VOR connect()
-        hinterlegt werden: Bricht die Verbindung ab, sendet der Broker
-        selbst {"status": "offline"} (retained) auf das Status-Topic."""
+        """Setzt einen Offline-Last-Will als Retained-Nachricht.
+
+        Verbindet sich anschließend mit dem Broker. Bei unerwartetem
+        Verbindungsabbruch kann dieser das Last-Will-JSON mit ``status`` und
+        ``sensor_id`` veröffentlichen.
+        """
         last_will = {"status": "offline", "sensor_id": self.sensor_id}
         self.client.will_set(self.status_topic, json.dumps(last_will), retain=True)
         self.client.connect()
         print("Mit MQTT-Broker verbunden. Client-ID:", self.client_id)
 
     def is_connected(self):
+        """Gibt den MQTT-Verbindungsstatus zurück oder False, falls die Prüfung fehlschlägt."""
         try:
             return self.client.is_connected()
         except Exception:
             return False
 
     def publish_telemetry(self, data):
-        """Sendet einen Messwert als JSON an das Telemetrie-Topic."""
+        """Veröffentlicht eine JSON-Payload auf dem konfigurierten Telemetrie-Topic.
+
+        Argumente:
+            data: Als JSON serialisierbare Telemetrie-Payload.
+        """
         self.client.publish(self.config["telemetry_topic"], json.dumps(data))
 
     def publish_humidity(self, data):
-        """Sendet die (simulierte) Luftfeuchte als JSON an das Feuchte-Topic."""
+        """Veröffentlicht eine JSON-Payload auf dem Feuchte-Topic.
+
+        Argumente:
+            data: Als JSON serialisierbare, normalerweise simulierte Feuchte-Payload.
+        """
         self.client.publish(self.humidity_topic, json.dumps(data))
 
     def publish_status(self, status):
-        """Sendet den Gerätestatus als JSON, z.B.
-        {"status": "ok", "timestamp": "...", "sensor_id": "..."}.
-        Pflicht ist nur "status", timestamp und sensor_id sind optional.
-        retain=True: Der Broker merkt sich die letzte Nachricht, neue
-        Abonnenten sehen den Status also sofort."""
+        """Veröffentlicht einen JSON-Status als Retained-Nachricht.
+
+        Der Status enthält einen Zeitstempel und die Sensor-ID.
+
+        Argumente:
+            status: Einer der Werte ``"ok"``, ``"error"`` oder ``"offline"``.
+
+        Ausnahmen:
+            ValueError: Wenn der Status keiner der erlaubten Werte ist.
+        """
         if status not in ("ok", "error", "offline"):
             raise ValueError("Ungültiger Status: " + str(status))
         payload = {
@@ -396,11 +475,11 @@ class MqttClient:
         self.client.publish(self.status_topic, json.dumps(payload), retain=True)
 
     def loop(self):
-        """Hält die Verbindung am Leben und verbindet bei Abbruch neu.
+        """Bearbeitet MQTT höchstens alle fünf Sekunden und verbindet bei Abbruch neu.
 
-        Da nichts abonniert ist, reicht ein Aufruf alle paar Sekunden
-        (Keep-Alive-Pings). Dazwischen kehrt die Methode sofort zurück,
-        damit Webserver und Messung nicht ausgebremst werden.
+        Zwischen Wiederverbindungsversuchen liegen mindestens zehn Sekunden.
+        Nach erfolgreicher Wiederverbindung versucht der Client, einen Status
+        ``"ok"`` zu veröffentlichen.
         """
         now = time.monotonic()
         if now - self.last_loop < 5:
@@ -430,19 +509,26 @@ class MqttClient:
 # KLASSE: WebServer
 # ===================================================================
 class WebServer:
-    """HTTP-API zur Fernkonfiguration (Bibliothek adafruit_httpserver).
+    """Stellt Konfiguration und Status über adafruit_httpserver bereit.
 
-    Schema: docs/iot-specs/openapi.yaml (Version 1.2.0)
-    GET  /config  -> {"device_id", "reading_interval_seconds", ...}
-    POST /config  <- {"reading_interval_seconds": 10}  (Minimum 2;
-                     device_id darf nicht geändert werden)
-    GET  /status  -> device_id, uptime_seconds, wifi_connected,
-                     mqtt_connected, last_telemetry, last_humidity_percent
-    Falsche Methode -> 405, unbekannter Pfad -> 404 (macht die Bibliothek),
-    ungültiges JSON / unbekannte Felder / ungültige Werte -> 400.
+    Die Endpunkte sind in ``docs/iot-specs/openapi.yaml`` beschrieben.
+    GET /config gibt ausgewählte Einstellungen aus. POST /config akzeptiert
+    ein JSON-Objekt, das nur ``reading_interval_seconds`` enthält (eine ganze
+    Zahl von 2 bis einschließlich 3600). GET /status meldet Laufzeit,
+    Verbindungsstatus, letzte Telemetrie und Informationen zur simulierten
+    Luftfeuchte. Ungültige Aktualisierungen liefern 400; nicht unterstützte
+    registrierte Methoden liefern 405.
     """
 
     def __init__(self, config_manager, network_manager, mqtt_client, start_time):
+        """Richtet HTTP-Routen ein und behält Referenzen auf den Anwendungszustand.
+
+        Argumente:
+            config_manager: Stellt die Konfiguration bereit und nimmt Änderungen an.
+            network_manager: Stellt WLAN-Status und IP-Adresse bereit.
+            mqtt_client: Stellt den MQTT-Verbindungsstatus bereit.
+            start_time: Monotoner Startzeitpunkt in Sekunden für die Laufzeitangabe.
+        """
         # Referenzen auf die anderen Objekte, um Status und Konfiguration
         # abfragen zu können (keine Kopien!).
         self.config_manager = config_manager
@@ -465,8 +551,11 @@ class WebServer:
         self.server.route("/status", alle_methoden)(self._handle_status_route)
 
     def start(self):
-        """Startet den Server. Nach einem Auto-Reload ist Port 80 manchmal
-        noch belegt, dann wird auf Port 5000 ausgewichen."""
+        """Startet den Server auf seinem aktuellen Port, zunächst 80.
+
+        Bei einem OSError beim Start wird Port 5000 versucht; ein Fehler bei
+        diesem erneuten Versuch wird weitergegeben.
+        """
         try:
             self.server.start(self.network_manager.get_ip(), self.port)
         except OSError as error:
@@ -481,26 +570,34 @@ class WebServer:
         print("  GET  " + basis + "/status")
 
     def poll(self):
-        """Bearbeitet eine anstehende Anfrage, ohne zu blockieren.
-        Muss in jedem Durchlauf der Hauptschleife aufgerufen werden."""
+        """Fragt den HTTP-Server einmal ab und protokolliert jede Ausnahme."""
         try:
             self.server.poll()
         except Exception as error:
             print("HTTP-Anfrage fehlgeschlagen:", error)
 
     def update_status(self, last_telemetry=None):
-        """Wird von main() nach jeder erfolgreich gesendeten Messung
-        aufgerufen. last_telemetry = {"timestamp", "value", "unit"}."""
+        """Aktualisiert den letzten Telemetriewert, ohne andere Statusdaten zu ersetzen.
+
+        Argumente:
+            last_telemetry: Auszugebender Wert, üblicherweise ein Dictionary mit
+                ``timestamp``, ``value`` und ``unit``; standardmäßig None.
+        """
         self.status_data["last_telemetry"] = last_telemetry
 
     def update_humidity(self, humidity_percent):
-        """Wird von main() nach jeder gesendeten (simulierten) Feuchte aufgerufen."""
+        """Aktualisiert den letzten Feuchtewert, ohne andere Statusdaten zu ersetzen.
+
+        Argumente:
+            humidity_percent: Als ``last_humidity_percent`` auszugebender Wert;
+                die Hauptschleife übergibt den simulierten Wert nach dem Senden.
+        """
         self.status_data["last_humidity_percent"] = humidity_percent
 
     # ---------------- interne Methoden ----------------
 
     def _method_not_allowed(self, request, erlaubt):
-        """405-Antwort mit Allow-Header (laut HTTP-Standard Pflicht bei 405)."""
+        """Gibt eine JSON-Antwort mit Status 405 und Allow-Header zurück."""
         return JSONResponse(
             request,
             {"error": "Methode nicht erlaubt"},
