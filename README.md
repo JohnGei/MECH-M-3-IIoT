@@ -12,7 +12,7 @@ Ein Raspberry Pi Pico W misst Temperatur, sendet sie per MQTT an den Kurs-Broker
 
 ## Video
 
-Bildschirmaufnahme des laufenden Systems: `<LINK ZUM VIDEO EINTRAGEN>`
+Bildschirmaufnahme des laufenden Picos: [Video auf YouTube ansehen](https://youtu.be/NRwdswusuCU)
 
 ## Erreichter Stand
 
