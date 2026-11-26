@@ -2,6 +2,8 @@
 
 Ein Raspberry Pi Pico W misst Temperatur, sendet sie per MQTT an den Kurs-Broker und lässt sich über eine HTTP-API konfigurieren. Eine Containerlösung aus Collector, InfluxDB und Grafana speichert die Daten **aller** Gruppen und zeigt sie in einem Dashboard an.
 
+[Projektdokumentation](docs/architecture.qmd) · [Raspberry-Pi-Firmware](docs/raspberry-pi.qmd) · [Monitoring-Stack](docs/monitoring-stack.qmd)
+
 ## Gruppe
 
 | | |
@@ -13,6 +15,8 @@ Ein Raspberry Pi Pico W misst Temperatur, sendet sie per MQTT an den Kurs-Broker
 ## Video
 
 Bildschirmaufnahme des laufenden Picos: [Video auf YouTube ansehen](https://youtu.be/NRwdswusuCU)
+
+![grafana-showcase](docs/gifs/grafana-showcase.gif)
 
 ## Erreichter Stand
 
@@ -28,19 +32,24 @@ Beanspruchte Stufen laut Aufgabenstellung: Teststufe Termin 2 mit OpenAPI-Toolin
 
 - **Kein DHT11:** Nach Absprache mit der LV-Leitung wird statt des DHT11 die interne Temperatur des RP2040-Chips gemessen, da keine Ersatzsensoren verfügbar waren. Sie liegt einige Grad über der Raumtemperatur. Am Pico muss nichts verkabelt werden.
 - **Simulierte Luftfeuchte:** Ohne DHT11 gibt es keinen Feuchtesensor. Damit Dashboard und `GET /status` trotzdem einen Feuchteverlauf zeigen, erzeugt die Firmware einen **simulierten** Wert (Zufallswerte zwischen 30 und 70 %, die sich nur langsam ändern). Er wird auf `…/sensor/humidity/state` gesendet und ist in jeder Nachricht mit `"simulated": true` gekennzeichnet; `GET /status` meldet zusätzlich `"humidity_simulated": true`. Mit `simulate_humidity = false` in `settings.toml` lässt sich die Simulation abschalten, dann meldet `GET /status` `"last_humidity_percent": null`.
-- **Konfiguration nicht dauerhaft:** `POST /config` übernimmt das neue Intervall sofort. Das Speichern in `settings.toml` scheitert am Schreibschutz von CircuitPython und wird in der Antwort mit `"saved_to_file": false` gemeldet; nach einem Neustart gilt wieder der Wert aus der Datei.
+- **Konfiguration über HTTP-API nicht dauerhaft:** `POST /config` übernimmt das neue Intervall sofort. Das Speichern in `settings.toml` scheitert am Schreibschutz von CircuitPython und wird in der Antwort mit `"saved_to_file": false` gemeldet; nach einem Neustart gilt wieder der Wert aus der Datei.
 
 ## Überblick
 
-```
-┌──────────────┐  MQTT (TCP 1883)   ┌─────────────────┐   MQTT    ┌───────────┐   ┌──────────┐   ┌─────────┐
-│  Pico W      │ ─────────────────▶ │  Kurs-Broker    │ ────────▶ │ Collector │ ─▶│ InfluxDB │ ─▶│ Grafana │
-│  CPU-Temp.   │   Messwerte +      │ 158.180.44.197  │  alle     │ (Python)  │   │          │   │ :3000   │
-│  HTTP-API:80 │   Status (JSON)    └─────────────────┘  Gruppen  └───────────┘   └──────────┘   └─────────┘
-└──────────────┘                                                  └──────── docker compose (Laptop) ───────┘
+```mermaid
+flowchart TD
+    Pico["Raspberry Pi Pico W"] -->|"MQTT: Messwerte und Status"| Broker["Kurs-Broker: 158.180.44.197:1883"]
+    Others["Weitere Geräte"] -->|"MQTT"| Broker
+    Broker -->|"Nachrichten aller Gruppen"| Collector
+    subgraph Stack["Docker Compose: Monitoring-Stack"]
+        Collector["MQTT-Collector"] -->|"Messwerte speichern"| Database["InfluxDB"]
+        Database -->|"Abfrageergebnisse"| Grafana["Grafana"]
+    end
+    Client["HTTP-Client"] -->|"Konfiguration und Status"| Pico
+    Grafana -->|"Dashboard: localhost:3000"| Browser["Browser auf dem Docker-Host"]
 ```
 
-- **Pico W** (`src/raspi_firmware/`): misst alle `reading_interval_seconds` die CPU-Temperatur und sendet sie mit UTC-Zeitstempel. Der Status (`ok`, `error`, `offline` per Last Will) liegt retained auf dem Status-Topic. Die HTTP-API dient zur Konfiguration im lokalen Netz.
+- **Pico W** (`src/raspi_firmware/`): misst alle `reading_interval_seconds` die CPU-Temperatur und sendet sie mit UTC-Zeitstempel. Optional sendet er simulierte Luftfeuchte. Der Status (`ok`, `error`, `offline` per Last Will) liegt retained auf dem Status-Topic. Die HTTP-API dient zur Konfiguration im lokalen Netz.
 - **Collector** (`src/iiot_monitoring/mqtt_collector.py`): abonniert die Topics aller Gruppen, prüft jede Nachricht und schreibt gültige Werte in InfluxDB. Fehlerhafte Nachrichten anderer Gruppen werden protokolliert und verworfen.
 - **InfluxDB** speichert die Zeitreihen, **Grafana** zeigt sie an. Datenquelle und Dashboard werden beim Start automatisch eingerichtet.
 
@@ -118,10 +127,11 @@ Die Konfiguration ist auf zwei Dateien verteilt:
    Die angezeigte IP-Adresse wird für die HTTP-API gebraucht.
 2. **MQTT Explorer** mit `158.180.44.197:1883` verbinden und `iiot/group/neubauer-gruenwald-werlberger` öffnen:
    - `…/sensor/temperature/state`: JSON mit `timestamp`, `value`, `unit`
+   - `…/sensor/humidity/state`: bei aktivierter Simulation JSON mit `value`, `unit` und `"simulated": true`
    - `…/status`: `{"status": "ok", …}` (retained)
    - Pico abstecken: Nach etwa 90 Sekunden setzt der Broker den Status auf `{"status": "offline", …}`.
 
-**Häufige Probleme:** `Unknown failure 205` beim ersten WLAN-Versuch ist normal, die Firmware versucht es bis zu fünfmal. „Fehlende Einträge in settings.toml/credentials.toml“ bedeutet, dass `credentials.toml` fehlt oder unvollständig ist.
+**Häufige Probleme:** Bei einem WLAN-Fehler versucht die Firmware jedes konfigurierte Netzwerk bis zu dreimal. Sind alle Versuche erfolglos, beginnt sie nach 30 Sekunden erneut. „Fehlende Einträge in settings.toml/credentials.toml“ bedeutet, dass `credentials.toml` fehlt oder unvollständig ist.
 
 ## Container starten
 
@@ -189,9 +199,9 @@ Die API läuft auf Port 80 des Pico W und ist nur aus demselben Netz erreichbar.
 
 | Endpunkt | Funktion |
 |---|---|
-| `GET /config` | `device_id`, `reading_interval_seconds` (zusätzlich die Topics) |
+| `GET /config` | `device_id`, `reading_interval_seconds` sowie Temperatur- und Status-Topic |
 | `POST /config` | Sendeintervall ändern, z.B. `{"reading_interval_seconds": 10}` (Minimum 2; `device_id` ist nicht änderbar) |
-| `GET /status` | `device_id`, `uptime_seconds`, `wifi_connected`, `mqtt_connected`, `last_telemetry`, `last_humidity_percent` |
+| `GET /status` | `device_id`, `uptime_seconds`, `wifi_connected`, `mqtt_connected`, `last_telemetry`, `last_humidity_percent`, `humidity_simulated` |
 
 Fehler: kaputtes JSON, ungültige Werte oder unbekannte Felder → **400**, unbekannter Pfad → **404**, falsche Methode → **405** mit `Allow`-Header.
 
