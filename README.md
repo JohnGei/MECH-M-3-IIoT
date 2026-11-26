@@ -15,7 +15,9 @@ Ein Raspberry Pi Pico W misst Temperatur, sendet sie per MQTT an den Kurs-Broker
 ## Video
 
 Bildschirmaufnahme des laufenden Picos: [Video auf YouTube ansehen](https://youtu.be/NRwdswusuCU)
+
 Bildschirmaufnahme des lauenden MQTT Collectors + Grafana Dashboard: [Video auf Youtube ansehen](https://youtu.be/YLX-siOkwSE)
+
 ![grafana-showcase](docs/gifs/grafana-showcase.gif)
 
 ## Erreichter Stand
