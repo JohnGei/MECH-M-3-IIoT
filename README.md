@@ -313,3 +313,14 @@ Die Lösung ist ein Prototyp. Für den Produktivbetrieb bräuchte es zusätzlich
 - **Geschützte Speicherung der Zugangsdaten** auf dem Gerät. Wer physischen Zugriff auf den Pico hat, kann `credentials.toml` über USB auslesen.
 - **Dashboard nur über einen Reverse Proxy mit HTTPS** und personalisierten Konten, falls es für das Management von außen erreichbar sein soll (z.B. auf dem iPhone).
 - **Betrieb:** Backups der InfluxDB, Aufbewahrungsfristen für Messdaten, Überwachung und ein Verfahren für Firmware-Updates aus der Ferne.
+
+## Dokumentation erstellen
+
+Voraussetzungen: Python 3.12 und [PDM](https://pdm-project.org/). Im Repository-Hauptverzeichnis:
+
+```sh
+pdm install
+pdm run docs-build
+```
+
+Das Ergebnis liegt unter `_site/index.html`; `pdm run docs-preview` startet eine Vorschau. Beide Befehle erzeugen die API-Referenz mit quartodoc aus den Firmware-Docstrings und bauen die Doku mit Quarto.
